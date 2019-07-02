@@ -1,0 +1,18 @@
+index=meditech_schedule  sourcetype=meditech:ip:allocations  Date>20190331   DrCode!="zzNULL" 		
+| sort 0 - _indextime 
+| eval indextime=strftime(_indextime,"%Y-%m-%d %H:%M:%S") 
+| dedup Date DrCode FromTime ToTime sortby -indextimel
+| eval A_start=strptime(Date.FromTime,"%Y%m%d%H%M"),
+      A_end=strptime(Date.ToTime,"%Y%m%d%H%M"),
+      Date_Surgeon=Date."_".DrCode, 
+      Surgeon=DrCode 
+| where A_start<now()  
+| table Date_Surgeon Surgeon Date A_start FromTime  A_end ToTime 
+| fillnull   A_start A_end FromTime ToTime 
+| stats min(A_start) as A_start  max(A_end) as A_end  by Date_Surgeon Surgeon Date
+| eval A_startHM=strftime(A_start,"%H:%M")
+| eval A_endtHM=strftime(A_end,"%H:%M")
+| table Date_Surgeon Surgeon Date A_start A_end  A_startHM A_endtHM
+| rename A_startHM as FromTime
+| rename A_endtHM as ToTime 
+| table Date_Surgeon Surgeon Date A_start A_end  FromTime ToTime 
