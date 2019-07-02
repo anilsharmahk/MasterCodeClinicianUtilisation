@@ -1,0 +1,83 @@
+index=meditech sourcetype=meditech:ip:theatre OperationDate>20190331 
+OperationRoom IN
+( "DS 1A","THEATRE 1", "THEATRE 2", "THEATRE 5", "THEATRE 7", "THEATRE 6", "THEATRE 3","DS 2A","THEATRE 8","MINOPSA","THEATRE 4","THEATRE HYB","MITU TH2","MITU TH1","MITU TR1")
+| sort 0 - _indextime
+
+|dedup Surgeon OperationDate VisitID AccountNumber UnitNumber OperationRoom  sortby _time 
+| eval tnow = now() | eval reportrun=strftime(tnow,"%Y-%m-%d %H:%M")| eval indextime=strftime(_indextime,"%Y-%m-%d %H:%M:%S")
+| eval     proc_start=coalesce(anaesthesiaBegin,surgeryBegin,patientArrival),    proc_end=coalesce(outOfTheatre,anaesthesiaEnd,surgeryEnd,recoveryStart),    
+   Date=strftime(proc_start,"%Y%m%d"),    proc_start_time=strftime(proc_start,"%A, %e %b %Y, %H:%M"),     proc_end_time=strftime(proc_end,"%A, %H:%M"),  
+   Date_Surgeon=Date."_".Surgeon,proc_mins=round((proc_end-proc_start)/60,0)     
+| table Date_Surgeon Surgeon surgeonTitle surgeonFirstName surgeonLastName Date proc_start proc_end proc_mins proc_start_time proc_end_time  OperationRoom  ActualOp ActualOpName AccountNumber VisitID Severity surgeonSpecialty AnesDr ActualOpSchBillNum ActualOpSchSeverity Ps OperationDate OperationRoom OpID indextime tnow reportrun  
+|fillnull | where proc_start !=0 
+| where proc_end !=0 
+
+|join type=left Date_Surgeon     
+
+[search 
+ index=meditech_schedule 
+ sourcetype=meditech:ip:allocations  
+ earliest=-1h@h  Date>20190331 
+ DrCode!="zzNULL" 		
+
+| dedup Date DrCode FromTime ToTime TheatreRoomCode 				
+| eval A_start=strptime(Date.FromTime,"%Y%m%d%H%M"),
+      A_end=strptime(Date.ToTime,"%Y%m%d%H%M"),
+      Date_Surgeon=Date."_".DrCode, 
+      Surgeon=DrCode 
+| where A_start<now()  
+
+| table Date_Surgeon Surgeon A_start A_end FromTime ToTime 
+
+]
+
+
+| fillnull   A_start A_end FromTime ToTime
+
+
+| append
+
+[ search    
+index=meditech_schedule sourcetype=meditech:ip:allocations  earliest=-1h@h  Date>20190331 DrCode!="zzNULL" 				
+| dedup Date DrCode FromTime ToTime TheatreRoomCode 				
+| eval A_start=strptime(Date.FromTime,"%Y%m%d%H%M"), A_end=strptime(Date.ToTime,"%Y%m%d%H%M"), Date_Surgeon=Date."_".DrCode, Surgeon=DrCode 
+| where A_start<now() 
+
+| table Date_Surgeon Surgeon A_start A_end FromTime ToTime 
+
+   | eval 
+        A_start=strptime(Date.FromTime,"%Y%m%d%H%M"), 		
+        A_end=strptime(Date.ToTime,"%Y%m%d%H%M"),
+        Date_Surgeon=Date."_".DrCode, 		
+        Surgeon=DrCode 	  
+     | where A_start<now()  	  
+     | table Date_Surgeon Surgeon A_start A_end FromTime ToTime   
+        | join type=left Date_Surgeon   
+        
+        [ search index=meditech    OperationDate>20190331 	  
+           OperationRoom IN ( "DS 1A","THEATRE 1", "THEATRE 2", "THEATRE 5", "THEATRE 7", "THEATRE 6", "THEATRE 3","DS 2A","THEATRE 8","MINOPSA","THEATRE 4","THEATRE HYB","MITU TH2","MITU TH1","MITU TR1"                   )    
+           | fields Surgeon OperationDate OperationRoom 
+           | sort 0 - _indextime   
+           | dedup Surgeon OperationDate   
+           | eval Date_Surgeon=OperationDate."_".Surgeon   
+           | table Date_Surgeon Surgeon OperationRoom   
+           ] 
+           | table Date_Surgeon Surgeon A_start A_end FromTime ToTime OperationRoom   
+           | where isnull(OperationRoom)]  
+           
+           | eval adhoc_noA_mins=if((A_start=0),proc_mins,0),adhoc_before_mins=if((proc_end<A_start),proc_mins,0),adhoc_after_mins=if((proc_start>A_end),proc_mins,0),adhoc_early_mins=if((proc_start<A_start AND proc_end>=A_start),round((A_start-proc_start)/60,0),0),adhoc_late_mins=if((proc_start<=A_end AND proc_end>A_end),round((proc_end-A_end)/60,0),0),
+           
+           
+           
+           tot_adhoc_mins=if(adhoc_noA_mins=0,(adhoc_noA_mins+adhoc_before_mins+adhoc_after_mins+adhoc_early_mins+adhoc_late_mins ),adhoc_noA_mins )
+           
+           
+           
+           
+           | eval A_ontime_mins=if((proc_start>=A_start AND proc_end<=A_end),proc_mins,0),A_early_mins=if((proc_start<A_start AND proc_end>=A_start),round((if(proc_end>A_end,A_end,proc_end)-A_start)/60,0),0),A_late_mins=if(((proc_start<A_end AND proc_start>=A_start) AND proc_end>A_end),round((A_end-proc_start)/60,0),0),
+           tot_A_op_mins=A_ontime_mins+A_early_mins+A_late_mins,
+           tot_A_mins=round((A_end-A_start)/60,0)      
+           | eval _time=if(isnull(proc_start),A_start,proc_start), week=strftime(_time,"%W")      
+           | table _time Date_Surgeon Surgeon surgeonTitle surgeonFirstName surgeonLastName proc_start proc_end proc_start_time proc_end_time FromTime ToTime proc_mins tot_adhoc_mins tot_A_op_mins tot_A_mins A_start A_end adhoc_noA_mins adhoc_before_mins adhoc_after_mins adhoc_early_mins adhoc_late_mins A_ontime_mins A_early_mins A_late_mins roomName ActualOp ActualOpName  AccountNumber VisitID Severity surgeonSpecialty AnesDr ActualOpSchBillNum ActualOpSchSeverity week Ps mask OperationRoom OpID OperationDate indextime tnow reportrun
+
+| summaryindex spool=t uselb=t addtime=t index="summary" file="RMD5dea8aff07c4b064f_352753907.stash_new" name="Meditech_Summary_Index_Report" marker="mask=\"summary_Ix_theatres_v1\""
